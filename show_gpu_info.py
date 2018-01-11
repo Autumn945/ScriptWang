@@ -71,11 +71,13 @@ class ShowGpuInfo:
         for l in self.lines:
             if l is not None:
                 print(l)
+        line = ' ' * 79
         if self.a:
-            print('可用：{}'.format(','.join(self.a)))
+            s = '可用: {}'.format(','.join(self.a))
         else:
-            print('满了!')
-        print(' ' * 80)
+            s = '满了!'
+        print('{}{}'.format(line[len(s) + 2:], s))
+        print(line)
         #print(self.lines[-1], end = '', flush = True)
 
     def run(self):
