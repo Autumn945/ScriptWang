@@ -13,13 +13,7 @@ def color_str(s, i):
     return '\033[1;3{};40m{}\033[0m'.format(i + 2, s)
 
 class ShowGpuInfo:
-    def __init__(self, nb_gpus = 4):
-        self.nb_gpus = nb_gpus
-        self.history = [[] for i in range(self.nb_gpus)]
-        self.nb_history = 10
-        self.avn = 20
-        self.a = []
-
+    def __init__(self):
         self.run()
         
     def get_gpu_info(self):
@@ -29,80 +23,108 @@ class ShowGpuInfo:
             self.lines.append(s[:-1])
         f.close()
 
-    def put_vu(self):
+    def get_cpu_info(self):
+        f = os.popen('ps au')
+        pid2cpu_info = {}
+        for s in f:
+            s = s.split()
+            if len(s) > 1:
+                pid = s[1]
+                # user, cpu, mem, time
+                info = [s[i] for i in [0, 2, 3, 9]]
+                pid2cpu_info[pid] = info
+        f.close()
+        return pid2cpu_info
+    """
+    def put_mm(self):
         p = '(\d+)MiB .* (\d+)MiB .* (\d+)%'
-        gid = 0
         for i, l in enumerate(self.lines):
             r = re.findall(p, l)
             if i and r:
                 v = int(r[0][-1])
-                self.history[gid].append(v)
                 a, b = int(r[0][0]), int(r[0][1])
-                s = '剩余 {:4.1f}G {:3.0f}%'.format((b - a) / 1024, (b - a) / b * 100)
+                s = '剩余{:4.1f}G {:3.0f}%'.format((b - a) / 1024, (b - a) / b * 100)
                 pl = self.lines[i - 1]
                 self.lines[i - 1] = '{}{}{}'.format(pl[:-7 - len(s) - 2], s, pl[-7:])
-                h = self.history[gid]
-                hm = np.mean(h[-self.nb_history:])
-                if hm < self.avn and h[-1] < self.avn: self.a.append(str(gid))
                 s = '{:3.0f}% {:3.0f}%'.format(hm, h[-1])
                 pl = self.lines[i]
                 self.lines[i] = '{}{}{}'.format(pl[:-13 - len(s)], s, pl[-13:])
-                gid += 1
-        if len(self.history[0]) > 3600:
-            for i in range(self.nb_gpus):
-                self.history[i] = self.history[i][-self.nb_history:]
-
-    def put_un(self):
+    """
+    def put_cpu_info(self, pid2cpu_info):
         p = '(\d)\s+(\d+)\s+(\S+)\s+(\S+)\s+(\d+)MiB'
-        gid = 0
+        line_width = None
+        header = None
+        header_id = None
+        table_ids = []
+        table = []
         for i, l in enumerate(self.lines):
+            if re.match('.*'.join(['', 'Processes:', 'GPU Memory']), l) is not None:
+                self.lines[i] = None
+                continue
+            if re.match('.*'.join(['', 'GPU', 'PID', 'Type', 'Process name']), l) is not None:
+                header = ['User', 'GPU', 'PID', 'CMD', 'GPU_Mem', '%cpu', '%mem', 'time']
+                header_id = i
+                self.lines[i] = None
+                line_width = len(l)
+                continue
             r = re.findall(p, l)
-            if i and r:
-                v = r[0][1]
-                s = '{} {}'.format(r[0][0], self.pid2user[v])
-                l = self.lines[i]
-                self.lines[i] = '{}{}{}'.format(l[:-22], s, l[-22 + len(s):])
-                self.lines[i] = color_str(self.lines[i], int(r[0][0]))
-                if int(r[0][-1]) < 100:
-                    self.lines[i] = None
-                gid += 1
+            if r:
+                self.lines[i] = None
+                pid = r[0][1]
+                cpu_header = ['User', '%cpu', '%mem', 'time']
+                cpu_info = pid2cpu_info.get(pid, ['none'] * len(cpu_header))
+                info = dict(zip(cpu_header, cpu_info))
+
+                gpu_info = l.split()
+                gpu_header = ['GPU', 'PID', 'CMD', 'GPU_Mem']
+                gpu_info = [gpu_info[i] for i in [1, 2, 4, 5]]
+                info.update(dict(zip(gpu_header, gpu_info)))
+                info = [info[h] for h in header]
+                table.append(info)
+                table_ids.append(i)
+        col_max = [0] * len(header)
+        for line in [header] + table:
+            for i, l in enumerate(line):
+                col_max[i] = max(col_max[i], len(l))
+        def get_line(line):
+            gpu = line[1]
+            ws = []
+            for max_width, word in zip(col_max, line):
+                #ws.append('{}{}'.format(word, ' ' * (max_width - len(word))))
+                ws.append('{}{}'.format(' ' * (max_width - len(word)), word))
+            s = '  '.join(ws)
+            space = line_width - len(s) - 2
+            left = space // 2
+            right = space - left
+            if len(gpu) == 1:
+                s = color_str(s, int(gpu))
+            s = '|{}{}{}|'.format(' ' * left, s, ' ' * right)
+            return s
+
+            
+        self.lines[header_id] = get_line(header)
+        for i, t in zip(table_ids, table):
+            self.lines[i] = get_line(t)
 
     def show(self):
         for l in self.lines:
             if l is not None:
                 print(l)
         line = ' ' * 79
-        if self.a:
-            s = '可用: {}'.format(','.join(self.a))
-        else:
-            s = '满了!'
-        print('{}{}'.format(line[len(s) + 2:], s))
         print(line)
         #print(self.lines[-1], end = '', flush = True)
 
     def run(self):
         os.system('clear')
         while True:
-            self.a = []
             self.get_gpu_info()
-            self.put_vu()
-            self.update_pid2user()
-            self.put_un()
+            #self.put_vu()
+            pid2cpu_info = self.get_cpu_info()
+            self.put_cpu_info(pid2cpu_info)
             self.show()
             os.system('tput cup 0 0')
             time.sleep(1)
             #return
-
-    def update_pid2user(self):
-        f = os.popen('ps au')
-        pids, users = [], []
-        for i, s in enumerate(f):
-            s = s.split()
-            if len(s) > 1:
-                users.append(s[0])
-                pids.append(s[1])
-        f.close()
-        self.pid2user = dict(zip(pids, users))
 
 def main():
     print('hello world, gpu.py')
